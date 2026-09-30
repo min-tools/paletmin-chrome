@@ -1,0 +1,48 @@
+{
+  "manifest_version": 3,
+  "name": "Paletmin Palette Toggle",
+  "version": "1.1.1",
+  "description": "Switch the current tab between Auto, Dark, and Light modes.",
+  "homepage_url": "https://github.com/min-tools/paletmin-chrome",
+  "minimum_chrome_version": "118",
+  "permissions": ["scripting", "storage"],
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["page.js"],
+      "world": "MAIN",
+      "run_at": "document_start",
+      "all_frames": true,
+      "match_origin_as_fallback": true
+    },
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_start",
+      "all_frames": true,
+      "match_origin_as_fallback": true
+    }
+  ],
+  "action": {
+    "default_title": "Auto palette",
+    "default_icon": {
+      "16": "icons/app-16.png",
+      "32": "icons/app-32.png"
+    }
+  },
+  "icons": {
+    "16": "icons/app-16.png",
+    "32": "icons/app-32.png",
+    "48": "icons/app-48.png",
+    "128": "icons/app-128.png"
+  },
+  "commands": {
+    "_execute_action": {
+      "description": "Cycle the current tab through Auto, Dark, and Light modes"
+    }
+  }
+}
