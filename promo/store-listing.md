@@ -20,6 +20,8 @@ Click the toolbar icon to cycle through three modes:
 
 Each tab keeps its mode until you close it or quit Chrome, so one site can be dark while the rest of the browser stays light. The icon shows the current mode and matches Chrome's toolbar. You can also assign a keyboard shortcut at chrome://extensions/shortcuts.
 
+A crossed-out A means the page is restricted or no compatible palette was detected after a fresh page load. Pages that were already open keep the normal icon while support is uncertain. Existing tabs are initialized after installation and when the extension is re-enabled. If a page needs one reload, the tooltip explains what to try.
+
 The extension changes the color scheme a website thinks you prefer, using the same signal as your operating system. It rewrites the website's matching media queries and does not add a theme of its own. If a website has no dark theme or ignores the system preference, nothing changes.
 
 What it does not do:
@@ -37,6 +39,10 @@ Open source under the MIT license: https://github.com/min-tools/paletmin-chrome
 ## Category
 
 Accessibility
+
+## Offscreen permission justification
+
+A hidden document bundled with the extension uses matchMedia to detect Chrome's native light or dark scheme and watch for changes. This lets the toolbar icon use a contrasting color immediately after installation, including on protected pages where content scripts cannot run. The document does not load websites or send network requests.
 
 ## Screenshots
 

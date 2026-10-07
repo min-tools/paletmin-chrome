@@ -10,6 +10,44 @@
   const LEGACY_RESET = 'palette-toggle:reset';
   const CONTENT_RESET = 'palette-toggle:content-reset';
   const CONTROLLER = Symbol.for('tools.min.paletmin.palette-toggle');
+  const SUPPORT = Symbol.for('tools.min.paletmin.palette-support');
+  const startedLate = !window[CONTROLLER] && document.readyState !== 'loading';
+
+  // watchSupport()
+  // Observe the page's own matchMedia calls after our patch is installed, so
+  // internal evaluations do not falsely count as website palette support.
+  // This also works with the persistent controller from the previous release.
+  function watchSupport() {
+    if (window[SUPPORT]) return;
+    let owner = document;
+    let used = false;
+    let late = startedLate;
+    const matchMedia = window.matchMedia;
+
+    // announce()
+    // Tell the isolated script what this document has used. A reused initial
+    // about:blank window must not carry detection over to its real document.
+    const announce = () => {
+      if (owner !== document) {
+        owner = document;
+        used = false;
+        late = false;
+      }
+      if (used) window.dispatchEvent(new Event('palette-toggle:supported'));
+      if (late) window.dispatchEvent(new Event('palette-toggle:late'));
+    };
+    window.matchMedia = function matchMediaWithSupport(query) {
+      announce();
+      const list = Reflect.apply(matchMedia, this, arguments);
+      if (/prefers-color-scheme/i.test(list.media) && !used) {
+        used = true;
+        announce();
+      }
+      return list;
+    };
+    window.addEventListener('palette-toggle:probe', announce);
+    Object.defineProperty(window, SUPPORT, { value: true });
+  }
 
   // Retire content scripts from the previous extension instance, and the
   // copy left over from a frame's initial about:blank document when Chrome
@@ -19,7 +57,10 @@
   document.dispatchEvent(new Event(LEGACY_RESET));
   document.dispatchEvent(new Event(CONTENT_RESET));
   window.dispatchEvent(new Event(CONTENT_RESET));
-  if (window[CONTROLLER]) return;
+  if (window[CONTROLLER]) {
+    watchSupport();
+    return;
+  }
 
   const native = window.matchMedia;
   const real = native.bind(window);
@@ -109,4 +150,5 @@
     enumerable: false,
     writable: false,
   });
+  watchSupport();
 })();

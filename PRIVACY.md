@@ -13,6 +13,8 @@ The extension makes no network requests. It cannot read rules inside cross-origi
 ## What is stored
 
 - Each tab's mode is kept in Chrome's session storage. It is removed when the tab closes or Chrome quits.
+- The same session storage keeps palette-detection flags and a random document token for each tab. These distinguish supported, restricted, and not-yet-detected pages. They are removed with the tab or browser session.
+- A session flag records whether existing tabs have been initialized. Disabling the extension clears this flag so tabs are checked again when it is enabled.
 - Chrome's light or dark scheme is kept in Chrome's local storage so the toolbar icon is correct after a restart.
 
 No page content, URLs, or browsing history are stored.
@@ -20,8 +22,9 @@ No page content, URLs, or browsing history are stored.
 ## Permissions
 
 - **Read and change all your data on all websites**: lets the extension run its scripts in every tab.
-- **scripting**: adds the scripts to tabs that are already open after installation or an update.
-- **storage**: used for the two items listed above.
+- **scripting**: adds the scripts to tabs that are already open after installation, an update, or re-enabling the extension.
+- **offscreen**: lets a hidden extension document detect Chrome's native light or dark scheme before any website loads, and watch for scheme changes.
+- **storage**: used for the items listed above.
 
 ## Changes
 

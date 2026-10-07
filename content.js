@@ -21,8 +21,19 @@
   const MENTION = /prefers-color-scheme/i;
   const RESET = 'palette-toggle:content-reset';
   let mode = 'auto'; // 'auto', 'dark', or 'light'
-  let observer; // Watches for new styles while a scheme is forced.
+  let observer; // Watches for new styles and palette support in every mode.
   let pending; // Pending apply() timer.
+  let active = true;
+  let cssSupported = false;
+  let jsSupported = false;
+  let opaque = false;
+  // Re-enabling can reuse page.js's controller, so its original start time
+  // alone cannot tell whether this new content script missed page activity.
+  let late = document.readyState !== 'loading';
+  let lastReport;
+  let lastStatus;
+  let revision = 0;
+  const key = crypto.getRandomValues(new Uint32Array(4)).join('-');
   const applied = new WeakMap(); // Rule or element -> { original, applied }
   const schemeSheet = new CSSStyleSheet(); // Holds the forced color-scheme rule.
 
@@ -30,6 +41,33 @@
   // Return Chrome's current scheme: 'dark' or 'light'.
   const system = () =>
     matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+
+  // status()
+  // Describe detectable palette support without copying page content or URLs.
+  const status = () => {
+    const page = {
+      key, supported: cssSupported || jsSupported, opaque, late,
+      ready: document.readyState !== 'loading',
+    };
+    const summary = JSON.stringify(page);
+    if (summary !== lastStatus) {
+      lastStatus = summary;
+      revision++;
+    }
+    return { ...page, revision };
+  };
+
+  // report()
+  // Send changed detection from the main document only. A themed advertisement
+  // or embedded widget must not label the whole page as supporting palettes.
+  function report() {
+    if (!active || window !== top) return;
+    const page = status();
+    const summary = JSON.stringify(page);
+    if (summary === lastReport) return;
+    lastReport = summary;
+    chrome.runtime.sendMessage({ type: 'status', page }).catch(() => {});
+  }
 
   // swapNeeded()
   // Return true when the forced scheme differs from Chrome's scheme.
@@ -49,6 +87,7 @@
   // that do not mention prefers-color-scheme.
   function rewrite(key, get, set) {
     const current = get();
+    if (MENTION.test(current)) cssSupported = true;
     let entry = applied.get(key);
     // Record a new query or one the page changed after the last rewrite.
     if (!entry || entry.applied !== current) {
@@ -88,6 +127,7 @@
     try {
       rules = sheet.cssRules;
     } catch {
+      opaque = true;
       return; // Reading rules throws for cross-origin sheets.
     }
     visitRules(rules);
@@ -103,8 +143,6 @@
     if (sheets.includes(schemeSheet)) {
       document.adoptedStyleSheets = sheets.filter((s) => s !== schemeSheet);
     }
-    if (mode === 'auto') return;
-
     // Return whether an element supports both light and dark.
     const both = (element) => {
       if (!element) return false;
@@ -115,6 +153,8 @@
     if (both(document.documentElement)) selectors.push(':root');
     if (both(document.body)) selectors.push('body');
     if (!selectors.length) return;
+    cssSupported = true;
+    if (mode === 'auto') return;
 
     // Use an adopted sheet so an inline-style CSP cannot block the rule.
     schemeSheet.replaceSync(
@@ -127,6 +167,8 @@
   // color-scheme. Auto restores the original values.
   function apply() {
     pending = undefined;
+    cssSupported = false;
+    opaque = false;
     if (!document.documentElement) return;
     for (const sheet of document.styleSheets) visitSheet(sheet);
     for (const sheet of document.adoptedStyleSheets) visitSheet(sheet);
@@ -136,11 +178,13 @@
         (text) => element.setAttribute('media', text));
     }
     applyColorScheme();
+    report();
   }
 
   // schedule()
   // Schedule apply(), combining several requests into one run.
   function schedule() {
+    if (!active) return;
     pending ??= setTimeout(apply, 0);
   }
 
@@ -150,12 +194,18 @@
   function watch() {
     observer ??= new MutationObserver((records) => {
       for (const record of records) {
-        // Reapply after a media attribute changes.
-        if (record.type === 'attributes') return schedule();
+        // Root/body classes and inline styles can change color-scheme. Other
+        // element classes do not need a full stylesheet scan.
+        if (record.type === 'attributes') {
+          if (['class', 'style'].includes(record.attributeName) &&
+              record.target !== document.documentElement && record.target !== document.body) continue;
+          return schedule();
+        }
         // Reapply when text is added inside a style element.
-        if (record.target.nodeName === 'STYLE') return schedule();
+        if (record.target.nodeName === 'STYLE' ||
+            record.target.parentNode?.nodeName === 'STYLE') return schedule();
         // Reapply when a new subtree contains styles or media attributes.
-        for (const node of record.addedNodes) {
+        for (const node of [...record.addedNodes, ...record.removedNodes]) {
           if (node.nodeType !== Node.ELEMENT_NODE) continue;
           if (node.matches('style, link, [media]') ||
               node.querySelector('style, link, [media]')) {
@@ -168,44 +218,52 @@
       childList: true,
       subtree: true,
       attributes: true,
-      attributeFilter: ['media'],
+      characterData: true,
+      attributeFilter: ['media', 'href', 'rel', 'class', 'style'],
     });
   }
 
   // setMode(next)
   // Switch this document to the requested mode, notify page.js, update the
-  // observer, and rewrite the document.
+  // detection, and rewrite the document.
   function setMode(next) {
     mode = next;
     document.dispatchEvent(new Event(`palette-toggle:${mode}`));
-    if (mode === 'auto') {
-      // Stop watching because Auto does not rewrite later changes.
-      observer?.disconnect();
-    } else {
-      watch();
-    }
     apply();
   }
 
   // A linked stylesheet loads after its element. Capture its non-bubbling
   // load event so the new rules are rewritten.
   const onLoad = (event) => {
-    if (mode !== 'auto' && event.target.nodeName === 'LINK') schedule();
+    if (event.target.nodeName === 'LINK') schedule();
   };
 
-  // Reapply when Chrome's scheme changes. The top frame also tells the worker
-  // to repaint the toolbar icons.
+  // Reapply when Chrome's scheme changes. Toolbar appearance is reported by
+  // the offscreen document and does not depend on any website's preference.
   const onScheme = () => {
-    if (mode !== 'auto') schedule();
-    if (window === top) {
-      chrome.runtime.sendMessage({ type: 'scheme', scheme: system() })
-        .catch(() => {});
-    }
+    schedule();
   };
+
+  // Learn about JavaScript queries, including those made before content.js
+  // started. Separate events avoid sharing objects between JavaScript worlds.
+  const onSupport = () => {
+    if (jsSupported) return;
+    jsSupported = true;
+    schedule();
+  };
+  const onLate = () => { late = true; };
 
   // Apply modes sent by the worker after a toolbar click or shortcut.
   const onMessage = (message, sender, respond) => {
-    if (sender.id !== chrome.runtime.id || message.type !== 'set') return;
+    if (!active || sender.id !== chrome.runtime.id) return;
+    if (message.type === 'probe') {
+      // Programmatic injection can miss scripts even while the page is loading.
+      if (message.late) late = true;
+      apply();
+      respond({ scheme: system(), page: status() });
+      return;
+    }
+    if (message.type !== 'set' || !['auto', 'dark', 'light'].includes(message.mode)) return;
     setMode(message.mode);
     respond(true);
   };
@@ -213,7 +271,11 @@
   // retire()
   // Restore the page and stop this copy after a newer copy starts.
   const retire = () => {
+    active = false;
     window.removeEventListener(RESET, retire);
+    window.removeEventListener('palette-toggle:supported', onSupport);
+    window.removeEventListener('palette-toggle:late', onLate);
+    document.removeEventListener('DOMContentLoaded', schedule);
     document.removeEventListener('load', onLoad, true);
     schemeList.removeEventListener('change', onScheme);
     try {
@@ -223,19 +285,26 @@
     }
     clearTimeout(pending);
     setMode('auto');
+    observer?.disconnect();
   };
 
   // page.js has already retired older content scripts.
   window.addEventListener(RESET, retire);
+  window.addEventListener('palette-toggle:supported', onSupport);
+  window.addEventListener('palette-toggle:late', onLate);
+  window.dispatchEvent(new Event('palette-toggle:probe'));
+  document.addEventListener('DOMContentLoaded', schedule);
   document.addEventListener('load', onLoad, true);
   const schemeList = matchMedia('(prefers-color-scheme: dark)');
   schemeList.addEventListener('change', onScheme);
   chrome.runtime.onMessage.addListener(onMessage);
+  watch();
+  apply();
 
-  // Request the tab's mode and report Chrome's scheme for the toolbar icon.
-  chrome.runtime.sendMessage({ type: 'get', scheme: system() })
+  // Request the saved mode. A retired copy must ignore a delayed response.
+  chrome.runtime.sendMessage({ type: 'get', page: status() })
     .then((reply) => {
-      if (['auto', 'dark', 'light'].includes(reply?.mode)) setMode(reply.mode);
+      if (active && ['auto', 'dark', 'light'].includes(reply?.mode)) setMode(reply.mode);
     })
     .catch(() => {}); // The worker may be unavailable just after an update.
 })();

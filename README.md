@@ -12,6 +12,8 @@ Click the toolbar icon to cycle through three modes:
 
 The first click always selects a scheme different from Chrome's. When Chrome uses light mode, the order is Auto → Dark → Light → Auto. In dark mode, the order is Auto → Light → Dark → Auto. The icon shows the tab's mode and matches Chrome's toolbar.
 
+A crossed-out A means the main page is restricted or no compatible palette was detected after observing a fresh page load. Pages that were already open keep the normal mode icon while support is uncertain. Hover over the icon for details. Detection looks for accessible color-scheme media queries, JavaScript queries made after the extension starts, and pages that declare both light and dark in `color-scheme`. You can still click an accessible page to try switching it. Detection updates as styles and scripts load.
+
 The extension changes the color scheme a website thinks you prefer and rewrites the website's matching media queries. It does not add a theme of its own. If a website has no dark theme or ignores the system preference, nothing changes.
 
 There is no popup, settings page, account, or data collection. See [PRIVACY.md](PRIVACY.md). The code is open source under the MIT license.
@@ -25,6 +27,8 @@ There is no popup, settings page, account, or data collection. See [PRIVACY.md](
 
 Chrome warns that the extension can read and change data on all websites. This permission lets its scripts run in every tab. The extension collects no data and makes no network requests.
 
+Existing tabs are initialized after installation and when the extension is re-enabled, so compatible CSS themes work without a reload. If a site's scripts saved their theme preference before the extension started, that page may need one reload. The tooltip explains this without marking the page as unsupported.
+
 ## How it works
 
 When the selected scheme differs from Chrome's, the extension swaps `dark` and `light` in each accessible `prefers-color-scheme` query:
@@ -35,13 +39,15 @@ When the selected scheme differs from Chrome's, the extension swaps `dark` and `
 
 Rules inside cross-origin stylesheets cannot be read from the page and remain unchanged. If a page declares `color-scheme: light dark` on its root or body, the extension forces that property too. This affects `light-dark()` colors and form controls.
 
-Each tab keeps its mode for the browser session. The mode is applied to every frame and reapplied after navigation. Auto restores the original queries. The extension remembers Chrome's scheme across restarts so it can draw the toolbar icon correctly before a page loads.
+Each tab keeps its mode for the browser session. The mode is applied to every frame and reapplied after navigation. Auto restores the original queries. A hidden, bundled extension document reads Chrome's native color scheme and watches for changes, so the toolbar icon initializes even when the current tab is a protected page. The last known scheme is also kept across restarts. Website preferences do not change the toolbar icon's color.
 
 After an extension update or reload, the new page script tells the previous content script to restore the page and stop. The same happens in a frame whose initial `about:blank` document was replaced by a same-origin page, where Chrome keeps the old copy alive. The page-side controller remains active so existing `matchMedia()` results keep receiving correct values and `change` events.
 
 ## Limits
 
-- `chrome://` pages and the Chrome Web Store do not allow content scripts, so they stay on Auto.
+- `chrome://` pages, the Chrome Web Store, and pages without granted site access show a crossed-out A. Palette switching is unavailable there.
+- A detected query is evidence of palette support, not a guarantee that the whole page will change. Undetected JavaScript, inaccessible stylesheets, and themes inside frames or shadow roots can limit detection. An embedded widget alone does not mark the main page as compatible.
+- Custom Chrome themes can use toolbar colors that differ from the native color scheme available to extensions.
 - Styles inside shadow roots are not rewritten.
 - Rules inside stylesheets loaded from another origin are not rewritten. A `media` attribute on their `<link>` element is still handled.
 - Scripts that call `matchMedia()` in the first milliseconds of a page load may see Chrome's scheme. They receive a `change` event once the mode is applied.
